@@ -4,6 +4,12 @@ ifndef app
 app := app.py
 endif
 
+.PHONY: fresh
+fresh:
+	rm -rf .venv
+	virtualenv .venv
+	@make deps
+	@echo Activate the virtual environment by typing 'source ./.venv/bin/activate'
 
 .PHONY: package_aws
 package_aws: clean jar
