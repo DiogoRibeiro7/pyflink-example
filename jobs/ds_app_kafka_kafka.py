@@ -1,58 +1,55 @@
-from pyflink.common import Types
-from pyflink.datastream import StreamExecutionEnvironment, RuntimeExecutionMode, MapFunction, KeyedProcessFunction, \
-    RuntimeContext
-from pyflink.datastream.state import MapStateDescriptor
+import os
+from os import path
 
+from pyflink.common import SimpleStringSchema, WatermarkStrategy
+from pyflink.datastream import (StreamExecutionEnvironment, RuntimeExecutionMode)
+from pyflink.datastream.connectors.base import DeliveryGuarantee
+from pyflink.datastream.connectors.kafka import (KafkaSource,
+                                                 KafkaOffsetsInitializer, KafkaSink, KafkaRecordSerializationSchema)
 
-class SerializerMapFunction(MapFunction):
-
-    def map(self, value):
-        print("serialize", value)
-        record = '|'.join([k + '=' + v for k, v in value.items()])
-        return record
-
-
-class LookupKeyedProcessFunction(KeyedProcessFunction):
-
-    def __init__(self):
-        self.lut_state = None
-
-    def open(self, runtime_context: RuntimeContext):
-        state_desc = MapStateDescriptor('LUT', Types.STRING(), Types.STRING())
-        self.lut_state = runtime_context.get_map_state(state_desc)
-        self.lut_state.put("141", "red alert")
-
-    def process_element(self, value, runtime_context: RuntimeContext):
-
-        lut = self.lut_state.get_internal_state()
-
-        if value.get("35") == "X":
-            self.lut_state.put_all(value.items())
-        if value.get("35") == "P":
-            lookup = lut.get("141")
-
-        print(value)
-        yield value
+LOCAL_DEBUG = os.getenv('LOCAL_DEBUG', False)
 
 
 def run():
+    brokers = "localhost:9092"
     env = StreamExecutionEnvironment.get_execution_environment()
     env.set_runtime_mode(RuntimeExecutionMode.STREAMING)
     env.set_parallelism(1)
 
-    """
-    map(DeserializerMapFunction(), output_type=Types.MAP(Types.STRING(),Types.STRING())) \
-        .filter(TargetCompIdFilterFunction()) \
-    """
+    # To enable local running/debugging, we manually add the project's shadow jar that has all the connectors built in
+    if LOCAL_DEBUG:
+        jar_location = str(path.join(path.dirname(path.abspath(__file__)), "../lib/bin/pyflink-services-1.0.jar"))
+        env.add_jars(f"file:///{jar_location}")
+        env.add_classpaths(f"file:///{jar_location}")
 
-    ds = env.from_collection([{"49": "1049"}, {"35": "X"}])
-    ds.key_by(lambda x: x.get("49"), Types.STRING()) \
-        .process(LookupKeyedProcessFunction(), output_type=Types.MAP(Types.STRING(), Types.STRING())) \
-        .map(SerializerMapFunction(), output_type=Types.STRING()) \
-        .print()
+    # Kafka source definition
+    source = (KafkaSource.builder()
+              .set_bootstrap_servers(brokers)
+              .set_topics("input_topic")
+              .set_group_id("stream_example")
+              .set_starting_offsets(KafkaOffsetsInitializer.earliest())
+              .set_value_only_deserializer(SimpleStringSchema())
+              .build())
+    # Build a Datastream from the Kafka source
+    stream = env.from_source(source, WatermarkStrategy.no_watermarks(), "Kafka Source")
 
-    env.execute("testeroni")
+    # Kafka sink definition
+    sink = (KafkaSink.builder()
+            .set_bootstrap_servers(brokers)
+            .set_record_serializer(
+        KafkaRecordSerializationSchema.builder()
+        .set_topic("output_topic")
+        .set_value_serialization_schema(SimpleStringSchema())
+        .build()
+    )
+            .set_delivery_guarantee(DeliveryGuarantee.AT_LEAST_ONCE)
+            .build())
+
+    # sink the Datastream from the Kafka source
+    stream.sink_to(sink)
+
+    env.execute("kafka-2-kafka")
 
 
-if (__name__ == '__main__'):
+if __name__ == '__main__':
     run()

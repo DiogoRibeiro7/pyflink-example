@@ -1,0 +1,4 @@
+blob.server.port: 6124
+jobmanager.rpc.address: jobmanager
+taskmanager.numberOfTaskSlots: 8
+query.server.port: 6125

@@ -129,9 +129,15 @@ services:
   localstack:
     image: public.ecr.aws/localstack/localstack:latest
     platform: linux/amd64
-    network_mode: "host"
     container_name: localstack
+    ports:
+      - "9999:9999"
+      - "4566:4566"
+      - "4586:4586"
     environment:
+      - "GATEWAY_LISTEN=0.0.0.0:4566"
+      - "EXTERNAL_SERVICE_PORTS_START=4510"
+      - "EXTERNAL_SERVICE_PORTS_END=4559"
       - "SERVICES=${LOCALSTACK_SERVICES:-kinesis,dynamodb,cloudwatch}"
       - "DEFAULT_REGION=${AWS_REGION:-us-east-1}"
       - "HOSTNAME=${LOCALSTACK_HOSTNAME:-localhost}"
@@ -139,6 +145,8 @@ services:
       - "KINESIS_ERROR_PROBABILITY=${LOCALSTACK_KINESIS_ERROR_PROBABILITY:-0.0}"
       - "DYNAMODB_ERROR_PROBABILITY=${LOCALSTACK_DYNAMODB_ERROR_PROBABILITY:-0.0}"
       - "DATA_DIR=${LOCALSTACK_DATA_DIR:-/tmp/localstack/data}"
+    volumes:
+      - "./.local/localstack/init-aws.sh:/etc/localstack/init/ready.d/init-aws.sh"
 
   kafka-ui:
     container_name: kafka-ui
@@ -185,7 +193,7 @@ services:
       KAFKA_JMX_PORT: 9997
       KAFKA_JMX_OPTS: -Dcom.sun.management.jmxremote -Dcom.sun.management.jmxremote.authenticate=false -Dcom.sun.management.jmxremote.ssl=false -Djava.rmi.server.hostname=kafka0 -Dcom.sun.management.jmxremote.rmi.port=9997
     volumes:
-      - ./scripts/update_run.sh:/tmp/update_run.sh
+      - ./.local/kafka/update_run.sh:/tmp/update_run.sh
     command: "bash -c 'if [ ! -f /tmp/update_run.sh ]; then echo \"ERROR: Did you forget the update_run.sh file that came with this docker-compose.yml file?\" && exit 1 ; else /tmp/update_run.sh && /etc/confluent/docker/run ; fi'"
   schema-registry0:
     image: confluentinc/cp-schema-registry:7.2.1.arm64
@@ -246,4 +254,5 @@ services:
       - kafka0
     command: "bash -c 'echo Waiting for Kafka to be ready... && \
                cub kafka-ready -b kafka0:29092 1 30 && \
-               kafka-topics --create --topic snapp --partitions 3 --replication-factor 1 --if-not-exists --bootstrap-server kafka0:29092'"
+               kafka-topics --create --topic input_topic --partitions 3 --replication-factor 1 --if-not-exists --bootstrap-server kafka0:29092 && \
+               kafka-topics --create --topic output_topic --partitions 3 --replication-factor 1 --if-not-exists --bootstrap-server kafka0:29092'"

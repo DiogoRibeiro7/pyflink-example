@@ -1,38 +1,43 @@
-from pyflink.common import Types
-from pyflink.datastream import StreamExecutionEnvironment, RuntimeExecutionMode, MapFunction, KeyedProcessFunction, \
-    RuntimeContext
-from pyflink.datastream.state import MapStateDescriptor
+import os
+from os import path
+from typing import Dict
+
+from pyflink.common.serialization import SimpleStringSchema
+from pyflink.datastream import (StreamExecutionEnvironment, RuntimeExecutionMode)
+from pyflink.datastream.connectors.kinesis import (FlinkKinesisConsumer, KinesisStreamsSink, PartitionKeyGenerator)
+
+LOCAL_DEBUG = os.getenv('LOCAL_DEBUG', False)
 
 
-class SerializerMapFunction(MapFunction):
+def get_source(stream_name: str, config: Dict = None) -> FlinkKinesisConsumer:
+    props = config or {}
+    consumer_config = {
+        'aws.region': 'us-east-1',
+        'aws.credentials.provider.basic.accesskeyid': 'localstack_ignored',
+        'aws.credentials.provider.basic.secretkey': 'localstack_ignored',
+        'flink.stream.initpos': 'LATEST',
+        'aws.endpoint': 'http://localhost:4566',
+        **props
+    }
+    return FlinkKinesisConsumer(stream_name, SimpleStringSchema(), consumer_config)
 
-    def map(self, value):
-        print("serialize", value)
-        record = '|'.join([k + '=' + v for k, v in value.items()])
-        return record
 
+def get_sink(stream_name: str, config: Dict = None) -> KinesisStreamsSink:
+    props = config or {}
+    sink_properties = {
+        'aws.region': 'us-east-1',
+        'aws.credentials.provider.basic.accesskeyid': 'aws_access_key_id',
+        'aws.credentials.provider.basic.secretkey': 'aws_secret_access_key',
+        'aws.endpoint': 'http://localhost:4566',
+        **props
+    }
 
-class LookupKeyedProcessFunction(KeyedProcessFunction):
-
-    def __init__(self):
-        self.lut_state = None
-
-    def open(self, runtime_context: RuntimeContext):
-        state_desc = MapStateDescriptor('LUT', Types.STRING(), Types.STRING())
-        self.lut_state = runtime_context.get_map_state(state_desc)
-        self.lut_state.put("141", "red alert")
-
-    def process_element(self, value, runtime_context: RuntimeContext):
-
-        lut = self.lut_state.get_internal_state()
-
-        if value.get("35") == "X":
-            self.lut_state.put_all(value.items())
-        if value.get("35") == "P":
-            lookup = lut.get("141")
-
-        print(value)
-        yield value
+    return (KinesisStreamsSink.builder()
+            .set_kinesis_client_properties(sink_properties)
+            .set_serialization_schema(SimpleStringSchema())
+            .set_partition_key_generator(PartitionKeyGenerator.fixed())
+            .set_stream_name(stream_name)
+            .build())
 
 
 def run():
@@ -40,19 +45,25 @@ def run():
     env.set_runtime_mode(RuntimeExecutionMode.STREAMING)
     env.set_parallelism(1)
 
-    """
-    map(DeserializerMapFunction(), output_type=Types.MAP(Types.STRING(),Types.STRING())) \
-        .filter(TargetCompIdFilterFunction()) \
-    """
+    # To enable local running/debugging, we manually add the project's shadow jar that has all the connectors built in
+    if LOCAL_DEBUG:
+        jar_location = str(path.join(path.dirname(path.abspath(__file__)), "../lib/bin/pyflink-services-1.0.jar"))
+        env.add_jars(f"file:///{jar_location}")
+        env.add_classpaths(f"file:///{jar_location}")
 
-    ds = env.from_collection([{"49": "1049"}, {"35": "X"}])
-    ds.key_by(lambda x: x.get("49"), Types.STRING()) \
-        .process(LookupKeyedProcessFunction(), output_type=Types.MAP(Types.STRING(), Types.STRING())) \
-        .map(SerializerMapFunction(), output_type=Types.STRING()) \
-        .print()
+    # Kinesis source definition
 
-    env.execute("testeroni")
+    # Build a Datastream from the Kinesis source
+    stream = env.add_source(get_source('input_stream'))
+
+    # Kinesis sink definition
+    sink = get_sink('output_stream')
+
+    # sink the Datastream from the Kinesis source
+    stream.sink_to(sink)
+
+    env.execute("kinesis-2-kinesis")
 
 
-if (__name__ == '__main__'):
+if __name__ == '__main__':
     run()

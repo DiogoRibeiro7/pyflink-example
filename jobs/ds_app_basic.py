@@ -41,12 +41,12 @@ def run():
 if __name__ == '__main__':
     run()
   # Should yield the following output:
-  """
-    ('same_key', 0)
-    ('same_key', 1)
-    ('same_key', 3)
-    ('same_key', 6)
-    ('same_key', 10)
-    ('same_key', 15)
-    ('same_key', 21)
-  """
+  # """
+  #   ('same_key', 0)
+  #   ('same_key', 1)
+  #   ('same_key', 3)
+  #   ('same_key', 6)
+  #   ('same_key', 10)
+  #   ('same_key', 15)
+  #   ('same_key', 21)
+  # """
